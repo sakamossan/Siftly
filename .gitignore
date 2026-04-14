@@ -61,6 +61,9 @@ Thumbs.db
 # Promo video tool (local only)
 promo-video/
 
+# Playwright session (contains auth cookies)
+.playwright-session/
+
 # Claude Code local settings
 .claude/
 

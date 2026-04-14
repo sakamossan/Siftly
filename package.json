@@ -13,7 +13,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "siftly": "tsx cli/siftly.ts"
+    "siftly": "tsx cli/siftly.ts",
+    "sync": "tsx scripts/sync-likes.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -44,6 +45,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "playwright": "^1.59.1",
     "prisma": "^7.4.2",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
