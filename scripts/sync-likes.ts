@@ -6,13 +6,14 @@
  * 通常の Chrome を閉じる必要はない (Canary は別プロセス)
  *
  * Usage:
- *   npx tsx scripts/sync-likes.ts --username <handle>
+ *   npx tsx scripts/sync-likes.ts --username <handle>             # 差分取得 (前回の続きから)
+ *   npx tsx scripts/sync-likes.ts --username <handle> --init      # 同期地点を保存 (取得はしない)
  *   npx tsx scripts/sync-likes.ts --username <handle> --no-post   # JSON ファイル保存のみ
  *   npx tsx scripts/sync-likes.ts --username <handle> --login     # セッション再取得
  */
 
 import { chromium, type Page } from 'playwright'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync as fsWriteFileSync, mkdirSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { createInterface } from 'readline'
@@ -26,6 +27,34 @@ const CHROME_CANARY = '/Applications/Google Chrome Canary.app/Contents/MacOS/Goo
 const SCROLL_INTERVAL_MS = 900
 const STAGNATION_THRESHOLD = 8
 const STAGNATION_EXTRA_WAIT_MS = 2000
+const SESSION_DIR = resolve(__dirname, '..', '.playwright-session')
+
+// ── Sync state (前回の最新ツイートIDを保存) ──
+
+interface SyncState {
+  lastTweetId: string
+  syncedAt: string
+}
+
+function syncStatePath(username: string): string {
+  return resolve(SESSION_DIR, `last-sync-${username}.json`)
+}
+
+function loadSyncState(username: string): SyncState | null {
+  const path = syncStatePath(username)
+  if (!existsSync(path)) return null
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+function saveSyncState(username: string, lastTweetId: string): void {
+  mkdirSync(SESSION_DIR, { recursive: true })
+  const state: SyncState = { lastTweetId, syncedAt: new Date().toISOString() }
+  fsWriteFileSync(syncStatePath(username), JSON.stringify(state, null, 2))
+}
 
 // ── CLI args ──
 
@@ -34,6 +63,7 @@ function parseArgs() {
   let username = ''
   let noPost = false
   let forceLogin = false
+  let init = false
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -47,6 +77,9 @@ function parseArgs() {
       case '--login':
         forceLogin = true
         break
+      case '--init':
+        init = true
+        break
     }
   }
 
@@ -55,13 +88,14 @@ function parseArgs() {
     console.error('')
     console.error('Options:')
     console.error('  --username, -u <handle>   X のユーザー名 (必須)')
+    console.error('  --init                    同期地点だけ保存して終了 (次回から差分取得)')
     console.error('  --no-post                 Siftly に POST せず JSON ファイルに保存')
     console.error('  --login                   セッションを再取得')
     process.exit(1)
   }
 
   username = username.replace(/^@/, '')
-  return { username, noPost, forceLogin }
+  return { username, noPost, forceLogin, init }
 }
 
 // ── Helpers ──
@@ -87,9 +121,20 @@ const INJECT_SCRIPT = `
   window.__siftlyTweets = [];
   window.__siftlySeen = new Set();
   window.__siftlyCount = 0;
+  // 前回同期時の最新ツイートID (addInitScript で埋め込み)
+  window.__siftlyStopAtId = null;
+  // 前回同期済みのツイートに到達したかどうか
+  window.__siftlyHitLastSync = false;
 
   function addTweet(t) {
     if (!t || !t.rest_id || window.__siftlySeen.has(t.rest_id)) return;
+    // 前回の最新ツイートに到達したらフラグを立てて、それ以降は追加しない
+    if (window.__siftlyStopAtId && t.rest_id === window.__siftlyStopAtId) {
+      window.__siftlyHitLastSync = true;
+      return;
+    }
+    if (window.__siftlyHitLastSync) return;
+
     window.__siftlySeen.add(t.rest_id);
     var leg = t.legacy || {};
     var usr = (t.core && t.core.user_results && t.core.user_results.result && t.core.user_results.result.legacy) || {};
@@ -122,7 +167,12 @@ const INJECT_SCRIPT = `
   }
 
   function isTweetObj(o) {
-    return o && typeof o === 'object' && typeof o.rest_id === 'string' && o.rest_id.length > 5 && (o.legacy || o.core);
+    if (!o || typeof o !== 'object') return false;
+    if (typeof o.rest_id !== 'string' || o.rest_id.length < 15) return false;
+    var leg = o.legacy;
+    if (!leg) return false;
+    // ツイートは full_text または text を必ず持つ (ユーザーオブジェクト等を除外)
+    return leg.full_text !== undefined || leg.text !== undefined;
   }
   function unwrapTweet(t) {
     if (!t) return null;
@@ -197,6 +247,13 @@ async function autoScroll(page: Page): Promise<number> {
 
     const currentCount: number = await page.evaluate(() => (window as any).__siftlyCount ?? 0)
 
+    // 前回同期済みのツイートに到達したらスクロール停止
+    const hitLastSync: boolean = await page.evaluate(() => (window as any).__siftlyHitLastSync ?? false)
+    if (hitLastSync) {
+      console.log(`  ✅ 前回の同期地点に到達: ${currentCount} tweets captured`)
+      return currentCount
+    }
+
     if (currentCount > lastCount) {
       if (currentCount % 50 === 0 || currentCount - lastCount >= 10) {
         console.log(`  📥 ${currentCount} tweets captured...`)
@@ -250,7 +307,7 @@ async function postToSiftly(data: { bookmarks: unknown[]; source: string }): Pro
 // ── Main ──
 
 async function main() {
-  const { username, noPost, forceLogin } = parseArgs()
+  const { username, noPost, forceLogin, init } = parseArgs()
 
   if (!existsSync(CHROME_CANARY)) {
     console.error('❌ Google Chrome Canary が見つかりません。')
@@ -258,8 +315,8 @@ async function main() {
     process.exit(1)
   }
 
-  // Check Siftly server (unless --no-post)
-  if (!noPost) {
+  // Check Siftly server (unless --no-post or --init)
+  if (!noPost && !init) {
     try {
       await fetch(`${SIFTLY_URL}/api/stats`)
     } catch {
@@ -275,6 +332,17 @@ async function main() {
     console.log('   セッションは .playwright-session/ に保存されます')
   }
 
+  if (init) {
+    console.log('🏁 同期地点を設定します')
+  } else {
+    const state = loadSyncState(username)
+    if (state) {
+      console.log(`🔄 差分取得: 前回同期 ${state.syncedAt} (ID: ${state.lastTweetId}) 以降`)
+    } else {
+      console.log('⚠️  同期地点が未設定です。先に --init で同期地点を設定してください。')
+      process.exit(1)
+    }
+  }
   console.log(`🚀 Chrome Canary で ${username} のいいね履歴をキャプチャ`)
 
   // launchPersistentContext: セッション (cookies等) が PROFILE_DIR に永続保存される
@@ -296,6 +364,17 @@ async function main() {
       await waitForEnter('x.com にログイン完了後、Enter を押してください...')
     }
 
+    // ページ読み込み前にインターセプトスクリプトを仕込む
+    // stopAtId を init script に埋め込む (page.evaluate では初期ロードに間に合わない)
+    const prevState = init ? null : loadSyncState(username)!
+    const stopAtId = prevState?.lastTweetId ?? null
+    const script = INJECT_SCRIPT.replace(
+      'window.__siftlyStopAtId = null;',
+      `window.__siftlyStopAtId = ${stopAtId ? `"${stopAtId}"` : 'null'};`
+    )
+    await page.addInitScript(script)
+    console.log('📡 API インターセプト準備完了')
+
     const likesUrl = `https://x.com/${username}/likes`
     console.log(`🌐 ${likesUrl} を開いています...`)
     await page.goto(likesUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
@@ -308,26 +387,35 @@ async function main() {
       process.exit(1)
     }
 
-    // Inject the interception script
-    await page.evaluate(INJECT_SCRIPT)
-    console.log('📡 API インターセプト開始')
-
-    // Scroll to top to trigger re-fetch (initial load wasn't intercepted)
-    await page.evaluate(() => window.scrollTo(0, 0))
-    await page.waitForTimeout(500)
+    if (init) {
+      // --init: 初期ロードの API レスポンスから同期地点を保存
+      const tweets = await page.evaluate(() => (window as any).__siftlyTweets)
+      if (tweets.length === 0) {
+        console.log('⚠️  いいねが見つかりませんでした。')
+        process.exit(0)
+      }
+      saveSyncState(username, tweets[0].id)
+      console.log(`✅ 同期地点を保存: ${tweets[0].id} (${tweets[0].timestamp})`)
+      console.log('   次回実行時はこの地点以降の新しいいいねだけ取得します')
+      return
+    }
 
     console.log('📜 自動スクロール開始...')
     const count = await autoScroll(page)
 
     if (count === 0) {
-      console.log('⚠️  いいねが見つかりませんでした。')
-      console.log('   ページが正しく読み込まれたか確認してください。')
-      process.exit(0)
+      console.log('✅ 新しいいいねはありません')
+      // 同期地点は更新しない
+      return
     }
 
     const tweets = await page.evaluate(() => (window as any).__siftlyTweets)
     const data = { bookmarks: tweets, source: 'like' as const }
     console.log(`📦 ${tweets.length} tweets を取得`)
+
+    // 最新のツイートID (配列の先頭 = 最も最近いいねしたもの) を保存
+    saveSyncState(username, tweets[0].id)
+    console.log(`💾 同期地点を更新: ${tweets[0].id}`)
 
     if (noPost) {
       const { writeFileSync } = await import('fs')
