@@ -13,6 +13,7 @@ HEALTH_URL="http://localhost:${PORT}/api/stats"
 MAX_WAIT=60
 STARTED_SERVER=false
 SERVER_PID=""
+DEV_LOG="/tmp/siftly-next-dev.log"
 
 cleanup() {
   if [ "$STARTED_SERVER" = true ] && [ -n "$SERVER_PID" ]; then
@@ -27,8 +28,9 @@ trap cleanup EXIT
 if curl -s -o /dev/null "$HEALTH_URL" 2>/dev/null; then
   echo "[run-sync] dev サーバーは既に起動中です"
 else
-  echo "[run-sync] dev サーバーを起動します..."
-  npx next dev --port "$PORT" > /dev/null 2>&1 &
+  echo "[run-sync] dev サーバーを起動します (log: $DEV_LOG)..."
+  : > "$DEV_LOG"
+  npx next dev --port "$PORT" >> "$DEV_LOG" 2>&1 &
   SERVER_PID=$!
   STARTED_SERVER=true
 
@@ -51,5 +53,13 @@ fi
 
 # sync-likes.ts を実行（引数をそのままパススルー）
 echo "[run-sync] sync-likes を実行します..."
-npx tsx scripts/sync-likes.ts "$@"
-echo "[run-sync] 完了"
+sync_exit=0
+npx tsx scripts/sync-likes.ts "$@" || sync_exit=$?
+if [ $sync_exit -ne 0 ] && [ "$STARTED_SERVER" = true ] && [ -f "$DEV_LOG" ]; then
+  echo "[run-sync] sync-likes が失敗しました (exit: $sync_exit)。dev サーバーログの末尾 50 行:" >&2
+  echo "----- $DEV_LOG -----" >&2
+  tail -n 50 "$DEV_LOG" >&2
+  echo "--------------------" >&2
+fi
+[ $sync_exit -eq 0 ] && echo "[run-sync] 完了"
+exit $sync_exit

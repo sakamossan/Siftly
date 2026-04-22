@@ -3,6 +3,16 @@ import prisma from '@/lib/db'
 import { parseBookmarksJson } from '@/lib/parser'
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  try {
+    return await handleImport(request)
+  } catch (err) {
+    console.error('[api/import] unhandled error:', err)
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err)
+    return NextResponse.json({ error: 'Unhandled server error', detail: message }, { status: 500 })
+  }
+}
+
+async function handleImport(request: NextRequest): Promise<NextResponse> {
   let formData: FormData
   try {
     formData = await request.formData()
