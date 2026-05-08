@@ -8,6 +8,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# .nvmrc の Node バージョンに揃える。
+# better-sqlite3 などネイティブモジュールは ABI が Node メジャーに紐づくため、
+# install 時と実行時で Node が違うと NODE_MODULE_VERSION 不整合で /api/import が 500 になる (#813)。
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  \. "$HOME/.nvm/nvm.sh" >/dev/null
+  if ! nvm use >/dev/null 2>&1; then
+    echo "[run-sync] エラー: .nvmrc ($(cat .nvmrc 2>/dev/null)) の Node が未インストールです。'nvm install' を実行してください。" >&2
+    exit 1
+  fi
+fi
+
 PORT=3000
 HEALTH_URL="http://localhost:${PORT}/api/stats"
 MAX_WAIT=60
