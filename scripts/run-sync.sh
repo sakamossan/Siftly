@@ -8,6 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# 案内行は既定で黙る。local-day-end.sh から日次で叩く都合、成功時に読みたいのは
+# sync-likes の取得件数と import 結果だけなので (#2489)。RUN_SYNC_VERBOSE=1 で従来どおり出す。
+# エラー行は verbose によらず stderr へ出し続ける。
+log() {
+  [ "${RUN_SYNC_VERBOSE:-0}" = "1" ] && echo "[run-sync] $*"
+  return 0
+}
+
 # .nvmrc の Node バージョンに揃える。
 # better-sqlite3 などネイティブモジュールは ABI が Node メジャーに紐づくため、
 # install 時と実行時で Node が違うと NODE_MODULE_VERSION 不整合で /api/import が 500 になる (#813)。
@@ -29,7 +37,7 @@ DEV_LOG="/tmp/siftly-next-dev.log"
 
 cleanup() {
   if [ "$STARTED_SERVER" = true ] && [ -n "$SERVER_PID" ]; then
-    echo "[run-sync] dev サーバーを停止します (PID: $SERVER_PID)"
+    log "dev サーバーを停止します (PID: $SERVER_PID)"
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
@@ -38,11 +46,11 @@ trap cleanup EXIT
 
 # ポート3000が使用中か確認
 if curl -s -o /dev/null "$HEALTH_URL" 2>/dev/null; then
-  echo "[run-sync] dev サーバーは既に起動中です"
+  log "dev サーバーは既に起動中です"
 else
-  echo "[run-sync] dev サーバーを起動します (log: $DEV_LOG)..."
+  log "dev サーバーを起動します (log: $DEV_LOG)..."
   : > "$DEV_LOG"
-  npx next dev --port "$PORT" >> "$DEV_LOG" 2>&1 &
+  node_modules/.bin/next dev --port "$PORT" >> "$DEV_LOG" 2>&1 &
   SERVER_PID=$!
   STARTED_SERVER=true
 
@@ -50,7 +58,7 @@ else
   elapsed=0
   while [ $elapsed -lt $MAX_WAIT ]; do
     if curl -s -o /dev/null "$HEALTH_URL" 2>/dev/null; then
-      echo "[run-sync] dev サーバーが起動しました (${elapsed}秒)"
+      log "dev サーバーが起動しました (${elapsed}秒)"
       break
     fi
     sleep 1
@@ -64,14 +72,14 @@ else
 fi
 
 # sync-likes.ts を実行（引数をそのままパススルー）
-echo "[run-sync] sync-likes を実行します..."
+log "sync-likes を実行します..."
 sync_exit=0
-npx tsx scripts/sync-likes.ts "$@" || sync_exit=$?
+node_modules/.bin/tsx scripts/sync-likes.ts "$@" || sync_exit=$?
 if [ $sync_exit -ne 0 ] && [ "$STARTED_SERVER" = true ] && [ -f "$DEV_LOG" ]; then
   echo "[run-sync] sync-likes が失敗しました (exit: $sync_exit)。dev サーバーログの末尾 50 行:" >&2
   echo "----- $DEV_LOG -----" >&2
   tail -n 50 "$DEV_LOG" >&2
   echo "--------------------" >&2
 fi
-[ $sync_exit -eq 0 ] && echo "[run-sync] 完了"
+[ $sync_exit -eq 0 ] && log "完了"
 exit $sync_exit

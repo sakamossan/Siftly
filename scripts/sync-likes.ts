@@ -10,6 +10,7 @@
  *   npx tsx scripts/sync-likes.ts --username <handle> --init      # 同期地点を保存 (取得はしない)
  *   npx tsx scripts/sync-likes.ts --username <handle> --no-post   # JSON ファイル保存のみ
  *   npx tsx scripts/sync-likes.ts --username <handle> --login     # セッション再取得
+ *   npx tsx scripts/sync-likes.ts --username <handle> --headed    # ブラウザを表示して実行
  */
 
 import { chromium, type Page } from 'playwright'
@@ -64,6 +65,7 @@ function parseArgs() {
   let noPost = false
   let forceLogin = false
   let init = false
+  let headed = false
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -80,6 +82,9 @@ function parseArgs() {
       case '--init':
         init = true
         break
+      case '--headed':
+        headed = true
+        break
     }
   }
 
@@ -91,11 +96,12 @@ function parseArgs() {
     console.error('  --init                    同期地点だけ保存して終了 (次回から差分取得)')
     console.error('  --no-post                 Siftly に POST せず JSON ファイルに保存')
     console.error('  --login                   セッションを再取得')
+    console.error('  --headed                  ブラウザを表示して実行 (既定は headless)')
     process.exit(1)
   }
 
   username = username.replace(/^@/, '')
-  return { username, noPost, forceLogin, init }
+  return { username, noPost, forceLogin, init, headed }
 }
 
 // ── Helpers ──
@@ -307,7 +313,7 @@ async function postToSiftly(data: { bookmarks: unknown[]; source: string }): Pro
 // ── Main ──
 
 async function main() {
-  const { username, noPost, forceLogin, init } = parseArgs()
+  const { username, noPost, forceLogin, init, headed } = parseArgs()
 
   if (!existsSync(CHROME_CANARY)) {
     console.error('❌ Google Chrome Canary が見つかりません。')
@@ -326,6 +332,10 @@ async function main() {
   }
 
   const needLogin = forceLogin || !hasSession()
+  // ログイン時は人が x.com を操作するので必ず表示する。それ以外は --headed のときだけ表示。
+  // executablePath 指定時の headless は chromium-headless-shell ではなく Chrome 実体の
+  // --headless (new headless) になるので、cookie を持つ canary-profile をそのまま使える。
+  const headless = !needLogin && !headed
 
   if (needLogin) {
     console.log('🔐 Chrome Canary でログインしてください (初回のみ)')
@@ -348,7 +358,7 @@ async function main() {
   // launchPersistentContext: セッション (cookies等) が PROFILE_DIR に永続保存される
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     executablePath: CHROME_CANARY,
-    headless: false,
+    headless,
     args: [
       '--disable-blink-features=AutomationControlled',
     ],
@@ -384,6 +394,9 @@ async function main() {
     // Check if redirected to login (session expired)
     if (page.url().includes('/login') || page.url().includes('/i/flow/login')) {
       console.error('❌ セッションが期限切れです。--login フラグで再ログインしてください。')
+      if (headless) {
+        console.error('   headless 実行を x.com が弾いている可能性もあります。--headed で再実行して切り分けてください。')
+      }
       process.exit(1)
     }
 
@@ -392,6 +405,7 @@ async function main() {
       const tweets = await page.evaluate(() => (window as any).__siftlyTweets)
       if (tweets.length === 0) {
         console.log('⚠️  いいねが見つかりませんでした。')
+        if (headless) console.log('   headless 実行を x.com が弾いている可能性があります。--headed で再実行してください。')
         process.exit(0)
       }
       saveSyncState(username, tweets[0].id)
@@ -405,6 +419,7 @@ async function main() {
 
     if (count === 0) {
       console.log('✅ 新しいいいねはありません')
+      if (headless) console.log('   0 件が想定外なら headless を x.com が弾いた可能性があるので --headed で再実行してください。')
       // 同期地点は更新しない
       return
     }
