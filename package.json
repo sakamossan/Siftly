@@ -51,5 +51,13 @@
     "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.1"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.6.2": true,
+    "esbuild@0.27.3": true,
+    "prisma@7.4.2": true,
+    "sharp@0.34.5": true,
+    "unrs-resolver@1.11.1": true,
+    "@prisma/engines@7.4.2": true
   }
 }
