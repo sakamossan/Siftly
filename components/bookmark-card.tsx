@@ -291,13 +291,10 @@ function isVideoUrl(url: string): boolean {
 
 /** Derive a thumbnail URL from a Twitter video URL */
 function deriveVideoThumb(url: string): string | null {
-  // amplify_video/{id}/vid/... → pbs.twimg.com/amplify_video_thumb/{id}/img/default.jpg
-  const amplify = url.match(/video\.twimg\.com\/amplify_video\/(\d+)/)
-  if (amplify) return `https://pbs.twimg.com/amplify_video_thumb/${amplify[1]}/img/default.jpg`
-  // ext_tw_video/{id}/pu/vid/... → pbs.twimg.com/ext_tw_video_thumb/{id}/pu/img/default.jpg
-  const ext = url.match(/video\.twimg\.com\/ext_tw_video\/(\d+)/)
-  if (ext) return `https://pbs.twimg.com/ext_tw_video_thumb/${ext[1]}/pu/img/default.jpg`
-  // tweet_video/{id}.mp4 → pbs.twimg.com/tweet_video_thumb/{id}.jpg
+  // amplify_video / ext_tw_video の thumb は /img/{hash}.jpg 形式で、hash は
+  // DB に無いため URL からは導出できない。かつて生成していた /img/default.jpg は
+  // 全件 404 だった (#2997 で実測: サンプル 20/20) ため分岐ごと落とした。
+  // tweet_video (GIF) だけは {id}.jpg で導出でき、生存も確認済み。
   const tweet = url.match(/video\.twimg\.com\/tweet_video\/([^.]+)\.mp4/)
   if (tweet) return `https://pbs.twimg.com/tweet_video_thumb/${tweet[1]}.jpg`
   return null
@@ -350,6 +347,7 @@ function MediaPlaceholder({ onClick, label, isVideo }: { onClick?: (e: React.Mou
 
 function TopMediaSlot({ item, tweetUrl }: TopMediaSlotProps) {
   const [imgError, setImgError] = useState(false)
+  const [videoError, setVideoError] = useState(false)
 
   // ── Photo: show inline ─────────────────────────────────────────────────────
   if (item.type === 'photo') {
@@ -377,11 +375,34 @@ function TopMediaSlot({ item, tweetUrl }: TopMediaSlotProps) {
     )
   }
 
-  // ── Video/GIF: always redirect to tweet — can't play locally ──────────────
+  // ── Video/GIF: play in-card through /api/media ────────────────────────────
+  // /api/media は Range を上流へ透過して 206 をそのまま返すので <video> から seek できる。
   // Guard: thumbnailUrl that is itself a video URL is not usable as an <img>
   const rawThumb = item.thumbnailUrl ?? null
   const thumb = rawThumb && !isVideoUrl(rawThumb) ? rawThumb
     : (!isVideoUrl(item.url) ? item.url : deriveVideoThumb(item.url))
+
+  // mp4 直リンクを持つ行だけ再生する。サムネ JPEG しか無い行と、上流が
+  // 消えている行 (403 / 404 → onError) は従来どおり X へ飛ばす。
+  if (isVideoUrl(item.url) && !videoError) {
+    const poster = thumb && !isVideoUrl(thumb) ? proxyUrl(thumb) : undefined
+    const common = {
+      src: proxyUrl(item.url),
+      // カードの高さを揃える値。photo 分岐の <img> と同じ
+      className: 'w-full h-48 object-cover bg-zinc-900',
+      playsInline: true,
+      // poster が導出できないので先頭フレームをサムネ代わりに描画させる。
+      // 一覧は 1 ページ 24 件なので同時接続もこの本数で収まる
+      preload: 'metadata' as const,
+      poster,
+      onError: () => setVideoError(true),
+      onClick: (e: React.MouseEvent) => e.stopPropagation(),
+    }
+    // GIF は X 本家に揃えて無音ループ自動再生、video は controls 付き
+    return item.type === 'gif'
+      ? <video {...common} autoPlay loop muted />
+      : <video {...common} controls />
+  }
 
   return (
     <a href={tweetUrl} target="_blank" rel="noopener noreferrer" className="relative block" onClick={(e) => e.stopPropagation()}>
