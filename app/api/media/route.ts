@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { TWIMG_FETCH_HEADERS } from '@/lib/twimg-headers'
 
 const ALLOWED_HOSTS = new Set([
   'pbs.twimg.com',
@@ -50,10 +51,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const upstream = await fetch(mediaUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Referer': 'https://twitter.com/',
-        'Origin': 'https://twitter.com',
-        'Accept': '*/*',
+        ...TWIMG_FETCH_HEADERS,
         ...(rangeHeader ? { 'Range': rangeHeader } : {}),
       },
     })

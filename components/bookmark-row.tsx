@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Image, Play } from 'lucide-react'
 import type { BookmarkWithMedia } from '@/lib/types'
+import ConcatCheckbox, { isConcatable } from '@/components/concat-checkbox'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -124,9 +125,11 @@ function MediaIndicator({ item }: { item: BookmarkWithMedia['mediaItems'][number
 interface BookmarkRowProps {
   bookmark: BookmarkWithMedia
   onClick: (bookmark: BookmarkWithMedia) => void
+  /** 動画結合のチェックボックスを出す (/bookmarks の一覧だけ) */
+  selectable?: boolean
 }
 
-export default function BookmarkRow({ bookmark, onClick }: BookmarkRowProps) {
+export default function BookmarkRow({ bookmark, onClick, selectable = false }: BookmarkRowProps) {
   const isKnownAuthor = bookmark.authorHandle !== 'unknown'
   const cleanText = stripTcoUrls(bookmark.text)
   const dateStr = formatDate(bookmark.tweetCreatedAt ?? bookmark.importedAt ?? null)
@@ -186,6 +189,11 @@ export default function BookmarkRow({ bookmark, onClick }: BookmarkRowProps) {
             </span>
           ))}
         </div>
+      )}
+
+      {/* Concat checkbox — 動画でない行は同じ幅の空き地で列を揃える */}
+      {selectable && (
+        isConcatable(firstMedia) ? <ConcatCheckbox bookmark={bookmark} /> : <div className="shrink-0 w-5" />
       )}
 
       {/* Media indicator */}

@@ -37,6 +37,7 @@ npx tsc --noEmit      # Type check
 npx prisma studio     # Database GUI
 npx prisma db push    # Apply schema changes to DB
 npm run build         # Production build
+mise trust && mise install   # ffmpeg (動画結合用)
 ```
 
 ## Project Structure

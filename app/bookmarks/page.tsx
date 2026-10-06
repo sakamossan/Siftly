@@ -20,6 +20,7 @@ import * as Select from '@radix-ui/react-select'
 import BookmarkCard from '@/components/bookmark-card'
 import BookmarkRow from '@/components/bookmark-row'
 import BookmarkDetailModal from '@/components/bookmark-detail-modal'
+import ConcatTray from '@/components/concat-tray'
 import type { BookmarkWithMedia, BookmarksResponse } from '@/lib/types'
 
 const DEFAULT_PAGE_SIZE = 24
@@ -412,7 +413,7 @@ function BookmarksPageInner() {
       </div>
 
       {/* ── Content ── */}
-      <div className="flex-1 px-6 md:px-8 py-6 max-w-7xl mx-auto w-full">
+      <div className="flex-1 px-6 md:px-8 pt-6 pb-32 max-w-7xl mx-auto w-full">
 
         {/* Results count */}
         {!loading && (
@@ -465,7 +466,7 @@ function BookmarksPageInner() {
           <div className="masonry-grid">
             {bookmarks.map((bookmark) => (
               <div key={bookmark.id} className="masonry-item">
-                <BookmarkCard bookmark={bookmark} />
+                <BookmarkCard bookmark={bookmark} selectable />
               </div>
             ))}
           </div>
@@ -475,7 +476,7 @@ function BookmarksPageInner() {
         {!loading && bookmarks.length > 0 && viewMode === 'list' && (
           <div className="flex flex-col gap-3 max-w-3xl mx-auto">
             {bookmarks.map((bookmark) => (
-              <BookmarkCard key={bookmark.id} bookmark={bookmark} />
+              <BookmarkCard key={bookmark.id} bookmark={bookmark} selectable />
             ))}
           </div>
         )}
@@ -484,7 +485,7 @@ function BookmarksPageInner() {
         {!loading && bookmarks.length > 0 && viewMode === 'compact' && (
           <div className="flex flex-col divide-y divide-zinc-800/50 border border-zinc-800 rounded-2xl overflow-hidden max-w-5xl mx-auto">
             {bookmarks.map((bookmark) => (
-              <BookmarkRow key={bookmark.id} bookmark={bookmark} onClick={setOpenBookmark} />
+              <BookmarkRow key={bookmark.id} bookmark={bookmark} onClick={setOpenBookmark} selectable />
             ))}
           </div>
         )}
@@ -496,6 +497,8 @@ function BookmarksPageInner() {
           onChange={(p) => setFilters((prev) => ({ ...prev, page: p }))}
         />
       </div>
+
+      <ConcatTray />
 
       {openBookmark && (
         <BookmarkDetailModal

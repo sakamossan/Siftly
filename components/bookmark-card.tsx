@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { ExternalLink, Download, FileText, Play, Pencil, X, Check, ImageOff, Bookmark, Globe } from 'lucide-react'
 import type { BookmarkWithMedia, Category } from '@/lib/types'
+import ConcatCheckbox from '@/components/concat-checkbox'
 
 // ── URL helpers ────────────────────────────────────────────────────────────────
 
@@ -600,9 +601,11 @@ function CategoryEditor({ bookmarkId, currentCategoryIds, onSave, onClose }: Cat
 
 interface BookmarkCardProps {
   bookmark: BookmarkWithMedia
+  /** 動画結合のチェックボックスを出す (/bookmarks の一覧だけ) */
+  selectable?: boolean
 }
 
-export default function BookmarkCard({ bookmark }: BookmarkCardProps) {
+export default function BookmarkCard({ bookmark, selectable = false }: BookmarkCardProps) {
   const [categories, setCategories] = useState(bookmark.categories)
   const [expanded, setExpanded] = useState(false)
   const [editingCategories, setEditingCategories] = useState(false)
@@ -723,8 +726,9 @@ export default function BookmarkCard({ bookmark }: BookmarkCardProps) {
 
       {/* Top media — full bleed, no padding */}
       {firstMedia && (
-        <div className="border-b border-zinc-800/60 rounded-t-2xl overflow-hidden shrink-0">
+        <div className="relative border-b border-zinc-800/60 rounded-t-2xl overflow-hidden shrink-0">
           <TopMediaSlot item={firstMedia} tweetUrl={tweetUrl} />
+          {selectable && <ConcatCheckbox bookmark={bookmark} className="absolute top-2 left-2 z-10" />}
         </div>
       )}
 
