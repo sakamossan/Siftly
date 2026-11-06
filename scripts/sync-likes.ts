@@ -374,6 +374,14 @@ async function main() {
       await waitForEnter('x.com にログイン完了後、Enter を押してください...')
     }
 
+    // 未ログインの /likes は /login ではなくプロフィールへ 307 され、headless は Cloudflare に 403 で
+    // 弾かれるので、後段の page.url() 判定では検知できない。goto の前に auth_token cookie で判定する (#4213)
+    const cookies = await context.cookies('https://x.com')
+    if (!cookies.some((c) => c.name === 'auth_token')) {
+      console.error('❌ x.com のセッションが切れています (auth_token cookie が無い)。--login で再ログインしてください。')
+      process.exit(1)
+    }
+
     // ページ読み込み前にインターセプトスクリプトを仕込む
     // stopAtId を init script に埋め込む (page.evaluate では初期ロードに間に合わない)
     const prevState = init ? null : loadSyncState(username)!
