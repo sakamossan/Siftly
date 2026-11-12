@@ -18,6 +18,7 @@ import { existsSync, readFileSync, writeFileSync as fsWriteFileSync, mkdirSync }
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { createInterface } from 'readline'
+import { execFileSync } from 'child_process'
 
 // ── Config ──
 
@@ -118,6 +119,20 @@ async function waitForEnter(prompt: string): Promise<void> {
 
 function hasSession(): boolean {
   return existsSync(PROFILE_DIR)
+}
+
+// x.com は UA に HeadlessChrome を含むリクエストに 403 を返すので、headless では通常の Chrome の UA を名乗る (#4252)
+// `--version` の出力は `Google Chrome 159.0.8153.0 canary` の形
+function canaryUserAgent(): string {
+  const version = execFileSync(CHROME_CANARY, ['--version'], { encoding: 'utf-8' })
+  const major = version.match(/(\d+)\.\d+\.\d+\.\d+/)?.[1]
+  if (!major) throw new Error(`Chrome Canary のバージョンを読み取れません: ${version.trim()}`)
+  return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+}
+
+function exitForbidden(): never {
+  console.error('❌ x.com が 403 を返しました。headless 実行を拒否された可能性があります。--headed で再実行して切り分けてください。')
+  process.exit(1)
 }
 
 // ── Injection script (derived from BOOKMARKLET_SCRIPT in app/import/page.tsx) ──
@@ -363,6 +378,8 @@ async function main() {
       '--disable-blink-features=AutomationControlled',
     ],
     viewport: { width: 1280, height: 900 },
+    // headed (--headed / --login) では Chrome 本来の UA のままにする
+    ...(headless ? { userAgent: canaryUserAgent() } : {}),
   })
 
   const page = await context.newPage()
@@ -378,7 +395,7 @@ async function main() {
     // 弾かれるので、後段の page.url() 判定では検知できない。goto の前に auth_token cookie で判定する (#4213)
     const cookies = await context.cookies('https://x.com')
     if (!cookies.some((c) => c.name === 'auth_token')) {
-      console.error('❌ x.com のセッションが切れています (auth_token cookie が無い)。--login で再ログインしてください。')
+      console.error(`❌ x.com のセッションが切れています (auth_token cookie が無い)。./scripts/run-sync.sh --username ${username} --login で再ログインしてください。`)
       process.exit(1)
     }
 
@@ -395,16 +412,24 @@ async function main() {
 
     const likesUrl = `https://x.com/${username}/likes`
     console.log(`🌐 ${likesUrl} を開いています...`)
-    await page.goto(likesUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    // Playwright のドキュメント上は 403 で例外を投げないが、実測では x.com の 403 に
+    // net::ERR_HTTP_RESPONSE_CODE_FAILURE を投げたので、例外と status の両方を 403 の案内へ寄せる (#4252)
+    let response
+    try {
+      response = await page.goto(likesUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('ERR_HTTP_RESPONSE_CODE_FAILURE')) exitForbidden()
+      throw err
+    }
+    if (response?.status() === 403) exitForbidden()
 
     await page.waitForTimeout(3000)
 
-    // Check if redirected to login (session expired)
-    if (page.url().includes('/login') || page.url().includes('/i/flow/login')) {
-      console.error('❌ セッションが期限切れです。--login フラグで再ログインしてください。')
-      if (headless) {
-        console.error('   headless 実行を x.com が弾いている可能性もあります。--headed で再実行して切り分けてください。')
-      }
+    // cookie はあってもサーバ側でセッションが失効していると、/likes はプロフィールや /login へリダイレクトされる。
+    // ログイン済みでも自分のいいね一覧は /i/history/likes へリダイレクトされる (2026-11-12 に確認)
+    const likesPaths = [`/${username}/likes`.toLowerCase(), '/i/history/likes']
+    if (!likesPaths.includes(new URL(page.url()).pathname.toLowerCase())) {
+      console.error(`❌ x.com のセッションが切れています (${page.url()} へリダイレクトされました)。./scripts/run-sync.sh --username ${username} --login で再ログインしてください。`)
       process.exit(1)
     }
 
