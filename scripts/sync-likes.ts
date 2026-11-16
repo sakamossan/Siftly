@@ -8,7 +8,7 @@
  * Usage:
  *   npx tsx scripts/sync-likes.ts --username <handle>             # 差分取得 (前回の続きから)
  *   npx tsx scripts/sync-likes.ts --username <handle> --init      # 同期地点を保存 (取得はしない)
- *   npx tsx scripts/sync-likes.ts --username <handle> --no-post   # JSON ファイル保存のみ
+ *   npx tsx scripts/sync-likes.ts --username <handle> --no-post   # JSON ファイル保存のみ (同期地点は進めない)
  *   npx tsx scripts/sync-likes.ts --username <handle> --login     # セッション再取得
  *   npx tsx scripts/sync-likes.ts --username <handle> --headed    # ブラウザを表示して実行
  */
@@ -95,7 +95,7 @@ function parseArgs() {
     console.error('Options:')
     console.error('  --username, -u <handle>   X のユーザー名 (必須)')
     console.error('  --init                    同期地点だけ保存して終了 (次回から差分取得)')
-    console.error('  --no-post                 Siftly に POST せず JSON ファイルに保存')
+    console.error('  --no-post                 Siftly に POST せず JSON ファイルに保存 (同期地点は進めない)')
     console.error('  --login                   セッションを再取得')
     console.error('  --headed                  ブラウザを表示して実行 (既定は headless)')
     process.exit(1)
@@ -461,18 +461,22 @@ async function main() {
     const data = { bookmarks: tweets, source: 'like' as const }
     console.log(`📦 ${tweets.length} tweets を取得`)
 
-    // 最新のツイートID (配列の先頭 = 最も最近いいねしたもの) を保存
-    saveSyncState(username, tweets[0].id)
-    console.log(`💾 同期地点を更新: ${tweets[0].id}`)
-
     if (noPost) {
       const { writeFileSync } = await import('fs')
       const outPath = `likes-${username}-${new Date().toISOString().slice(0, 10)}.json`
       writeFileSync(outPath, JSON.stringify(data, null, 2))
       console.log(`💾 ${outPath} に保存しました`)
-    } else {
-      await postToSiftly(data)
+      console.log('   同期地点は更新していません (Siftly に import した地点だけを同期地点にする)')
+      return
     }
+
+    // 同期地点は「Siftly の DB に import 済みの地点」なので import 成功後に進める。
+    // postToSiftly は失敗時に throw するので、失敗した回の Likes は次回の差分で取り直される。
+    await postToSiftly(data)
+
+    // 最新のツイートID (配列の先頭 = 最も最近いいねしたもの) を保存
+    saveSyncState(username, tweets[0].id)
+    console.log(`💾 同期地点を更新: ${tweets[0].id}`)
   } finally {
     await page.close()
     await context.close()
